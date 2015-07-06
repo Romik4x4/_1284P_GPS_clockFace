@@ -1,6 +1,7 @@
 //
 // Arduino 1.0.1
 //
+// Переходим на 1.0.6
 
 #include <Wire.h>
 #include <Time.h>                         // download from: http://www.arduino.cc/playground/Code/Time

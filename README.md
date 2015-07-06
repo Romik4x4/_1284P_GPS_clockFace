@@ -1,0 +1,3 @@
+# _1284P_GPS_clockFace
+_1284P_GPS_clockFace
+Полностью переписать нужно

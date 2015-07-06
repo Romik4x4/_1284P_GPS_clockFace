@@ -1,26 +1,27 @@
 //
-// Arduino 1.0.1
+// Arduino 1.0.6
 //
-// Переходим на 1.0.6
 
 #include <Wire.h>
-#include <Time.h>                         // download from: http://www.arduino.cc/playground/Code/Time
-#include <glcd.h>                         // Graphics LCD library   
-#include "fonts/fixednums7x15.h"          // system font
-#include "fonts/TimeFont.h"               // system font
+#include <glcd.h>                            // Graphics LCD library   
+#include "fonts/fixednums7x15.h"    // system font
+#include "fonts/TimeFont.h"            // system font
 #include "fonts/fixednums15x31.h"
 #include "fonts/SystemFont5x7.h"
-
-#include <TinyGPS.h>
+#include <RTClib.h>
+#include <TinyGPS++.h>
 #include <Sunrise.h>
-
 #include <SoftwareSerial.h>
 
 SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
 #define GPS_STAT 1
 
+#define UTC 3 //  UTC+3 = Moscow
+
 #define DS1307_ADDRESS 0x68
+
+RTC_DS1307 rtc;  // DS1307 RTC Real Time Clock
 
 // ------------------- GLOBAL DATE TIME POSITION -------------------------------------
 
@@ -37,7 +38,7 @@ SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
 // -----------------------------------------------------------------------------------
 
-TinyGPS gps;
+TinyGPSPlus gps;
 
 // -----------------------------------------------------------------------------------
 
@@ -78,12 +79,14 @@ void setup() {
 
   Wire.begin();
   
+  rtc.begin();
+   
   bmp085Calibration();
 
   GLCD.Init();                // start the GLCD code
   GLCD.SelectFont(TimeFont);  // romik0.h
-
-  setTime(23,37,0,2,1,10);    // set time to 4:37 am Jan 2 2010  
+  
+  // setTime(23,37,0,2,1,10);    // set time to 4:37 am Jan 2 2010  
 
   pinMode(GPS_STAT,OUTPUT);   // LED GPS Status
   digitalWrite(GPS_STAT,LOW);
@@ -93,6 +96,7 @@ void setup() {
   Serial1.print("$PSRF100,1,4800,8,1,0*0E\r\n");
   
   gps_out.begin(4800);
+  gps_out.println("Test");
   
   // setDateTime();
  
@@ -130,40 +134,15 @@ void g_print_time( void ) {
  
  GLCD.CursorToXY(0,0);
 
-  Wire.beginTransmission(DS1307_ADDRESS);
-  Wire.write(0);
-  Wire.endTransmission();
-  Wire.requestFrom(DS1307_ADDRESS, 7);
-
-  int s = bcdToDec(Wire.read());
-  int m = bcdToDec(Wire.read());
-  int h = bcdToDec(Wire.read() & 0b111111); //24 hour time
-  
-  int weekDay = bcdToDec(Wire.read()); //0-6 -> sunday - Saturday
-  int monthDay = bcdToDec(Wire.read());
-  int month = bcdToDec(Wire.read());
-  int year = bcdToDec(Wire.read());
-
-   // byte h = hour();
-   // byte m = minute();
-   // byte s = second();
+ DateTime now = rtc.now();
 
  GLCD.SelectFont(TimeFont);
  
- if (h < 10) GLCD.print("0"); GLCD.print(h,DEC); 
+ if (now.hour() < 10) GLCD.print("0"); GLCD.print(now.hour(),DEC); 
  GLCD.print(":");
- if (m < 10) GLCD.print("0"); GLCD.print(m,DEC); 
+ if (now.minute() < 10) GLCD.print("0"); GLCD.print(now.minute(),DEC); 
  GLCD.print(":");
- if (s < 10) GLCD.print("0"); GLCD.print(s,DEC); 
-
-// ----------- Печатать Месяц и день -----------------------------
- 
- GLCD.CursorToXY(63,26);
- GLCD.SelectFont(System5x7);
-    
- if (monthDay < 10) GLCD.print("0");   GLCD.print(monthDay,DEC);
- GLCD.print("-");
- if (month < 10) GLCD.print("0"); GLCD.print(month,DEC);    
+ if (now.second() < 10) GLCD.print("0"); GLCD.print(now.second(),DEC); 
  
 }
 
@@ -211,11 +190,12 @@ void Sun( void ) {
 // ------------------------------ Устанавливаем данные со спутника ------------------------------------
 
 void set_gps_values( void ) {
-  
+
+/*  
   int t;
   byte _hour;
   
-  gps.crack_datetime(&g_year, &g_month, &g_day, &g_hour, &g_minutes, &g_second, &g_hundredths, &g_age);
+  // gps.crack_datetime(&g_year, &g_month, &g_day, &g_hour, &g_minutes, &g_second, &g_hundredths, &g_age);
  
   if (g_age != TinyGPS::GPS_INVALID_AGE) {
       
@@ -274,6 +254,7 @@ void set_gps_values( void ) {
   }
 
  }
+  */
   
 }
 
@@ -520,11 +501,11 @@ void bmp( void ) {
     
     GLCD.CursorToXY(100,0);
     
-    if ( minute() > 30 && minute() < 35) GLCD.print(pressure/133.322,0);
+   //  if ( minute() > 30 && minute() < 35) GLCD.print(pressure/133.322,0);
     
     GLCD.CursorToXY(100,20);
 
-    if ( minute() > 0 && minute() < 5) GLCD.print(pressure/133.322,0);
+    // if ( minute() > 0 && minute() < 5) GLCD.print(pressure/133.322,0);
 
 }
 

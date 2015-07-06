@@ -21,20 +21,30 @@ SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
 #define DS1307_ADDRESS 0x68
 
+#define TIMECTL_MAXTICS 4294967295L
+#define TIMECTL_INIT          0
+
 RTC_DS1307 rtc;  // DS1307 RTC Real Time Clock
+
+unsigned long SetgpsTimeMark     = 0;
+unsigned long SetgpsTimeInterval = 1000*60*10;  // 10 Минут
+
+unsigned long TimeMark = 0;
+unsigned long TimeInterval = 800; // Каждую секунду
+
 
 // ------------------- GLOBAL DATE TIME POSITION -------------------------------------
 
-  int Up_m = 0;
-  int Up_h = 0;
-  int D_m = 0;
-  int D_h = 0;
-  
-  int g_year;
-  byte g_month, g_day, g_hour, g_minutes, g_second, g_hundredths;
-  unsigned long g_age;
-  unsigned long g_fix_age;
-  float g_lat, g_lon;
+int Up_m = 0;
+int Up_h = 0;
+int D_m = 0;
+int D_h = 0;
+
+int g_year;
+byte g_month, g_day, g_hour, g_minutes, g_second, g_hundredths;
+unsigned long g_age;
+unsigned long g_fix_age;
+float g_lat, g_lon;
 
 // -----------------------------------------------------------------------------------
 
@@ -72,34 +82,39 @@ int radius = 1;
 int color = BLACK;
 char c;
 int angle = 0;
- 
+
 // ------------------------------ Setup -------------------------------------
 
 void setup() {
 
   Wire.begin();
-  
+
   rtc.begin();
-   
+
   bmp085Calibration();
 
-  GLCD.Init();                // start the GLCD code
-  GLCD.SelectFont(TimeFont);  // romik0.h
-  
-  // setTime(23,37,0,2,1,10);    // set time to 4:37 am Jan 2 2010  
+  GLCD.Init();                             
+  GLCD.SelectFont(TimeFont); 
 
   pinMode(GPS_STAT,OUTPUT);   // LED GPS Status
   digitalWrite(GPS_STAT,LOW);
-  
+
   Serial1.begin(4800);        // GPS Connected Serial One port
-  
+
   Serial1.print("$PSRF100,1,4800,8,1,0*0E\r\n");
-  
+
   gps_out.begin(4800);
-  gps_out.println("Test");
-  
-  // setDateTime();
+
+  // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
+  Sun();
  
+  // x,y - рисует линейку
+  
+  GLCD.DrawLine( 45,60, 127, 60, BLACK);  // Горизонт
+  GLCD.DrawLine( 45,25, 45, 60, BLACK);    // Вертикаль
+  
+
 }
 
 // ----------------------------- Loop --------------------------------------
@@ -107,83 +122,146 @@ void setup() {
 void  loop() {  
 
   currentMillis = millis();
-  
-  if (Serial1.available()) {  
-   c = Serial1.read();
-   gps_out.print(c);
-   if (gps.encode(c)) {
-    set_gps_values();
-    digitalWrite(GPS_STAT,HIGH);
-   } 
+
+  if (isTime(&SetgpsTimeMark,SetgpsTimeInterval))  { // Каждые 10 минут
+    set_GPS_DateTime(); 
+    Sun();
   }
-  
-  if(currentMillis - previousMillis > interval) {
-   previousMillis = currentMillis; 
-   g_print_time();      
-   Sun();
-   bmp();
+
+  if (Serial1.available()) {  
+    char c = Serial1.read();
+    gps_out.print(c);
+  }
+
+  if (isTime(&TimeMark,TimeInterval))  { 
+
+    g_print_time();     
+
+    if (gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
+      digitalWrite(GPS_STAT,HIGH);
+    } 
+    else {
+      digitalWrite(GPS_STAT,LOW);
+    }
+
   }   
-  
+
 }
+
+
 
 // ------------------------------------------------ Functions ------------------------------------------
 
+int isTime(unsigned long *timeMark, unsigned long timeInterval) {
+  unsigned long timeCurrent;
+  unsigned long timeElapsed;
+  int result=false;
+
+  timeCurrent = millis();
+  if (timeCurrent < *timeMark) {
+    timeElapsed=(TIMECTL_MAXTICS-*timeMark) + timeCurrent;
+  } 
+  else {
+    timeElapsed=timeCurrent-*timeMark;
+  }
+
+  if (timeElapsed>=timeInterval) {
+    *timeMark=timeCurrent;
+    result=true;
+  }
+  return(result);
+}
+
+void set_GPS_DateTime() {
+
+  if (gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
+
+    DateTime utc = (DateTime (gps.date.year(), 
+    gps.date.month(), 
+    gps.date.day(),
+    gps.time.hour(),
+    gps.time.minute(),
+    gps.time.second()) + 60 * 60 * UTC);
+
+    rtc.adjust(DateTime(utc.unixtime()));
+
+  }
+}
+
 void g_print_time( void ) {
-    
- // ------------ Печатаем время ------------------------------------
- 
- GLCD.CursorToXY(0,0);
 
- DateTime now = rtc.now();
+  // ------------ Печатаем время ------------------------------------
 
- GLCD.SelectFont(TimeFont);
- 
- if (now.hour() < 10) GLCD.print("0"); GLCD.print(now.hour(),DEC); 
- GLCD.print(":");
- if (now.minute() < 10) GLCD.print("0"); GLCD.print(now.minute(),DEC); 
- GLCD.print(":");
- if (now.second() < 10) GLCD.print("0"); GLCD.print(now.second(),DEC); 
- 
+  GLCD.CursorToXY(0,0);
+
+  DateTime now = rtc.now();
+
+  GLCD.SelectFont(TimeFont);
+
+  if (now.hour() < 10) GLCD.print("0"); 
+  GLCD.print(now.hour(),DEC); 
+  GLCD.print(":");
+  if (now.minute() < 10) GLCD.print("0"); 
+  GLCD.print(now.minute(),DEC); 
+  GLCD.print(":");
+  if (now.second() < 10) GLCD.print("0"); 
+  GLCD.print(now.second(),DEC); 
+
 }
 
 // ---------------- Sun Rise and Sun Set Выводим на экран -------------------------------
 
 void Sun( void ) { 
-  
-    GLCD.SelectFont(fixednums7x15);  // Select Font
-    
-    GLCD.CursorToXY(0,27);
-    if (Up_h<10) GLCD.print("0"); GLCD.print(Up_h,DEC);     
-    GLCD.print(":");     
-    if (Up_m<10) GLCD.print("0"); GLCD.print(Up_m,DEC);     
-  
-    GLCD.CursorToXY(0,45);
-    if (D_h<10) GLCD.print("0"); GLCD.print(D_h,DEC);     
-    GLCD.print(":");     
-    if (D_m<10) GLCD.print("0"); GLCD.print(D_m,DEC);     
-    
-    int x = 50;
-    int y = 33;
-    int r_radius = 7;
-    
-    GLCD.FillCircle(x,y,r_radius,WHITE);
-    GLCD.DrawCircle(x,y,r_radius); 
-    
-    float rad = (angle/1) * (3.14/150);
-    
-    int x1 = x + r_radius * cos(rad);
-    int y1 = y + r_radius * sin(rad);
 
-    angle+=10; if (angle > 360 ) angle = 0;
-    
-    GLCD.DrawLine(x,y,x1,y1,BLACK);
-        
-    GLCD.DrawCircle(50,52,7); for(int i=1;i<=radius;i++) GLCD.DrawCircle(50,52,i,color);  
-    
-    radius++;
-    
-    if ( radius > 7 ) { radius = 1; if (color == BLACK) color = WHITE; else color = BLACK; }
-   
+  byte Up_m = 0;
+  byte Up_h = 0;
+  byte D_m = 0;
+  byte D_h = 0;
+
+  int t;
+
+  // =========================================================
+
+  if (gps.location.isValid() && gps.date.isValid() && gps.time.isValid()) {
+
+    DateTime cur_time = rtc.now();
+
+    Sunrise mySunrise(gps.location.lat(),gps.location.lng(),4);
+
+    mySunrise.Actual();
+
+    t = mySunrise.Rise(cur_time.month(),cur_time.day());
+
+    if(t >= 0) {
+      Up_h = mySunrise.Hour();
+      Up_m = mySunrise.Minute();
+    }
+
+    t = mySunrise.Set(cur_time.month(),cur_time.day());
+
+    if(t >= 0) {
+      D_h = mySunrise.Hour();
+      D_m = mySunrise.Minute();
+    }
+
+  } // Если GPS is OK
+
+  GLCD.SelectFont(fixednums7x15);  // Select Font
+
+  GLCD.CursorToXY(0,27);
+  if (Up_h<10) GLCD.print("0"); 
+  GLCD.print(Up_h,DEC);     
+  GLCD.print(":");     
+  if (Up_m<10) GLCD.print("0"); 
+  GLCD.print(Up_m,DEC);     
+
+  GLCD.CursorToXY(0,45);
+  if (D_h<10) GLCD.print("0"); 
+  GLCD.print(D_h,DEC);     
+  GLCD.print(":");     
+  if (D_m<10) GLCD.print("0"); 
+  GLCD.print(D_m,DEC);     
+
 }
 
 
@@ -191,71 +269,53 @@ void Sun( void ) {
 
 void set_gps_values( void ) {
 
-/*  
-  int t;
-  byte _hour;
-  
-  // gps.crack_datetime(&g_year, &g_month, &g_day, &g_hour, &g_minutes, &g_second, &g_hundredths, &g_age);
- 
-  if (g_age != TinyGPS::GPS_INVALID_AGE) {
-      
-  gps.f_get_position(&g_lat, &g_lon, &g_fix_age);
-
-  _hour = g_hour + 4;
-
-  if (_hour > 24) { 
+  /*  
+   int t;
+   byte _hour;
+   
+   // gps.crack_datetime(&g_year, &g_month, &g_day, &g_hour, &g_minutes, &g_second, &g_hundredths, &g_age);
+   
+   if (g_age != TinyGPS::GPS_INVALID_AGE) {
+   
+   gps.f_get_position(&g_lat, &g_lon, &g_fix_age);
+   
+   _hour = g_hour + 4;
+   
+   if (_hour > 24) { 
    g_hour = g_hour; 
-  } else { 
+   } else { 
    g_hour = _hour; 
-  }
-  
-  if (_hour == 24) { 
+   }
+   
+   if (_hour == 24) { 
    g_hour = 0; 
-  }
+   }
+   
+   setTime(g_hour,g_minutes,g_second,g_day,g_month,g_year); // set time to 4:37 am Jan 2 2010 
+   
+   // ============== Set Date for DS1307 ======================
+   
+   byte weekDay =     2;  //1-7
+   
+   Wire.beginTransmission(DS1307_ADDRESS);
+   Wire.write(0); //stop Oscillator
+   
+   Wire.write(decToBcd(g_second));
+   Wire.write(decToBcd(g_minutes));
+   Wire.write(decToBcd(g_hour));
+   Wire.write(decToBcd(weekDay));
+   Wire.write(decToBcd(g_day));
+   Wire.write(decToBcd(g_month));
+   Wire.write(decToBcd(g_year));
+   
+   Wire.write(0); //start
+   Wire.endTransmission();
+   
+   
+   
+   }
+   */
 
-  setTime(g_hour,g_minutes,g_second,g_day,g_month,g_year); // set time to 4:37 am Jan 2 2010 
-  
-  // ============== Set Date for DS1307 ======================
-  
-  byte weekDay =     2;  //1-7
-
-  Wire.beginTransmission(DS1307_ADDRESS);
-  Wire.write(0); //stop Oscillator
-
-  Wire.write(decToBcd(g_second));
-  Wire.write(decToBcd(g_minutes));
-  Wire.write(decToBcd(g_hour));
-  Wire.write(decToBcd(weekDay));
-  Wire.write(decToBcd(g_day));
-  Wire.write(decToBcd(g_month));
-  Wire.write(decToBcd(g_year));
-
-  Wire.write(0); //start
-  Wire.endTransmission();
-
-  // =========================================================
-    
-  Sunrise mySunrise(g_lat,g_lon,4);
-
-  mySunrise.Actual();
-
-  t = mySunrise.Rise(g_month,g_day);
-     
-  if(t >= 0) {
-    Up_h = mySunrise.Hour();
-    Up_m = mySunrise.Minute();
-  }
-  
-  t = mySunrise.Set(g_month,g_day);
-  
-  if(t >= 0) {
-    D_h = mySunrise.Hour();
-    D_m = mySunrise.Minute();
-  }
-
- }
-  */
-  
 }
 
 
@@ -266,7 +326,7 @@ void set_gps_values( void ) {
 // --------------- This function should be called at the beginning of the program
 
 void bmp085Calibration( void ) {
-  
+
   ac1 = bmp085ReadInt(0xAA);
   ac2 = bmp085ReadInt(0xAC);
   ac3 = bmp085ReadInt(0xAE);
@@ -278,7 +338,7 @@ void bmp085Calibration( void ) {
   mb = bmp085ReadInt(0xBA);
   mc = bmp085ReadInt(0xBC);
   md = bmp085ReadInt(0xBE);
-  
+
 }
 
 // ----------------------------- Calculate temperature in deg C ----------------------------------------
@@ -303,14 +363,14 @@ float bmp085GetTemperature(unsigned int ut) {
 // ------------------ Value returned will be pressure in units of Pa.
 
 long bmp085GetPressure(unsigned long up) {
-  
+
   long x1, x2, x3, b3, b6, p;
   unsigned long b4, b7;
 
   b6 = b5 - 4000;
-  
+
   // ------ Calculate B3
-  
+
   x1 = (b2 * (b6 * b6)>>12)>>11;
   x2 = (ac2 * b6)>>11;
   x3 = x1 + x2;
@@ -341,7 +401,7 @@ long bmp085GetPressure(unsigned long up) {
 // ------------------------------------- Read 1 byte from the BMP085 at 'address' --------------------------------
 
 char bmp085Read(unsigned char address) {
-  
+
   unsigned char data;
 
   Wire.beginTransmission(BMP085_ADDRESS);
@@ -359,7 +419,7 @@ char bmp085Read(unsigned char address) {
 // --------------------------------------- Second byte will be from 'address'+1
 
 int bmp085ReadInt(unsigned char address) {
-  
+
   unsigned char msb, lsb;
 
   Wire.beginTransmission(BMP085_ADDRESS);
@@ -368,7 +428,7 @@ int bmp085ReadInt(unsigned char address) {
 
   Wire.requestFrom(BMP085_ADDRESS, 2);
   while(Wire.available()<2);
-    
+
   msb = Wire.read();
   lsb = Wire.read();
 
@@ -396,7 +456,7 @@ unsigned int bmp085ReadUT(){
   // Read two bytes from registers 0xF6 and 0xF7
 
   ut = bmp085ReadInt(0xF6);
-  
+
   return ut;
 }
 
@@ -409,18 +469,18 @@ unsigned long bmp085ReadUP(){
 
   // Write 0x34+(OSS<<6) into register 0xF4
   // Request a pressure reading w/ oversampling setting
-  
+
   Wire.beginTransmission(BMP085_ADDRESS);
   Wire.write(0xF4);
   Wire.write(0x34 + (OSS<<6));
   Wire.endTransmission();
 
   // Wait for conversion, delay time dependent on OSS
-  
+
   delay(2 + (3<<OSS));
 
   // Read register 0xF6 (MSB), 0xF7 (LSB), and 0xF8 (XLSB)
-  
+
   msb  = bmp085Read(0xF6);
   lsb  = bmp085Read(0xF7);
   xlsb = bmp085Read(0xF8);
@@ -433,7 +493,7 @@ unsigned long bmp085ReadUP(){
 // ---------------------------------------- Запись регистров -----------------------------
 
 void writeRegister(int deviceAddress, byte address, byte val) {
-  
+
   Wire.beginTransmission(deviceAddress);  // start transmission to device 
   Wire.write(address);                    // send register address
   Wire.write(val);                        // send value to write
@@ -446,7 +506,7 @@ void writeRegister(int deviceAddress, byte address, byte val) {
 int readRegister(int deviceAddress, byte address){
 
   int v;
-  
+
   Wire.beginTransmission(deviceAddress);
   Wire.write(address);                    // register to read
   Wire.endTransmission();
@@ -476,36 +536,36 @@ float calcAltitude(float pressure) {
 
 void bmp( void ) {
 
-    float temperature = bmp085GetTemperature(bmp085ReadUT()); // MUST be called first
-    float pressure = bmp085GetPressure(bmp085ReadUP());
-    float atm = pressure / 101325;                            // standard atmosphere
-    float altitude = calcAltitude(pressure);                  // Uncompensated caculation - in Meters 
-    
-    GLCD.SelectFont(System5x7);
+  float temperature = bmp085GetTemperature(bmp085ReadUT()); // MUST be called first
+  float pressure = bmp085GetPressure(bmp085ReadUP());
+  float atm = pressure / 101325;                            // standard atmosphere
+  float altitude = calcAltitude(pressure);                  // Uncompensated caculation - in Meters 
 
-    GLCD.CursorToXY(63,36);
-    GLCD.print(temperature);
-    GLCD.print("C");
-    
-    GLCD.CursorToXY(63,46);
-    GLCD.print(pressure/133.322,0);
-    GLCD.print(" N");
-    GLCD.print(g_lat);
-    
-    GLCD.CursorToXY(63,56);
-    GLCD.print(altitude,0);
-    GLCD.print(" E");
-    GLCD.print(g_lon);
-    
-    GLCD.SelectFont(fixednums7x15);
-    
-    GLCD.CursorToXY(100,0);
-    
-   //  if ( minute() > 30 && minute() < 35) GLCD.print(pressure/133.322,0);
-    
-    GLCD.CursorToXY(100,20);
+  GLCD.SelectFont(System5x7);
 
-    // if ( minute() > 0 && minute() < 5) GLCD.print(pressure/133.322,0);
+  GLCD.CursorToXY(63,36);
+  GLCD.print(temperature);
+  GLCD.print("C");
+
+  GLCD.CursorToXY(63,46);
+  GLCD.print(pressure/133.322,0);
+  GLCD.print(" N");
+  GLCD.print(g_lat);
+
+  GLCD.CursorToXY(63,56);
+  GLCD.print(altitude,0);
+  GLCD.print(" E");
+  GLCD.print(g_lon);
+
+  GLCD.SelectFont(fixednums7x15);
+
+  GLCD.CursorToXY(100,0);
+
+  //  if ( minute() > 30 && minute() < 35) GLCD.print(pressure/133.322,0);
+
+  GLCD.CursorToXY(100,20);
+
+  // if ( minute() > 0 && minute() < 5) GLCD.print(pressure/133.322,0);
 
 }
 
@@ -544,4 +604,7 @@ byte decToBcd(byte val) {
 byte bcdToDec(byte val) {
   return ( (val/16*10) + (val%16) );
 }
+
+
+
 

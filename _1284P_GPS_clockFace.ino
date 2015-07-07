@@ -16,6 +16,8 @@
 #include <BMP085.h>
 #include <EEPROM.h>
 
+#define DEBUG 0
+
 // ----------------------- BMP085 ---------------------------------
 
 struct bmp085_data_in // Данные о давлении,высоте и температуре
@@ -34,10 +36,9 @@ struct bmp085_data_out  // Данные о давлении,высоте и те
 } 
 bmp085_out;
 
+#define TWO_DAYS 172800
 
-SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
-
-#define GPS_STAT 1
+#define GPS_STAT  1 // D1 LED
 
 #define UTC 3 //  UTC+3 = Moscow
 
@@ -48,6 +49,8 @@ SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
 RTC_DS1307 rtc;  // DS1307 RTC Real Time Clock
 
+#define FIVE_MINUT 300000
+
 unsigned long SetgpsTimeMark     = 0;
 unsigned long SetgpsTimeInterval = 1000*60*10;  // 10 Минут
 
@@ -55,20 +58,24 @@ unsigned long TimeMark = 0;
 unsigned long TimeInterval = 800;  // Каждую секунду
 
 unsigned long bmpTimeMark = 0;
-unsigned long bmpTimeInterval = 6000;  // Каждую секунду
+unsigned long bmpTimeInterval = 6000;  // Каждую минуту
 
 unsigned long saveTimeMark = 0;
-unsigned long saveTimeInterval = 1000*60*5;  // Каждые 20 минут
+unsigned long saveTimeInterval = FIVE_MINUT*4;  // Каждые 20 минут
 
 unsigned long showTimeMark = 0;
-unsigned long showTimeInterval = 1000*60*2;  // Каждые 2 минуты
+unsigned long showTimeInterval = 6000*2;  // Каждые 2 минуты
 
 
 // -----------------------------------------------------------------------------------
 
 TinyGPSPlus gps;
+
 BMP085 dps = BMP085();   
+
 long Temperature = 0, Pressure = 0, Altitude = 0;
+
+SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
 // -----------------------------------------------------------------------------------
 
@@ -132,6 +139,8 @@ void setup() {
   GLCD.CursorToXY(92,12);
   GLCD.print(Temperature/10.0);
 
+  Show_Bar_Data();
+
 }
 
 // ----------------------------- Loop --------------------------------------
@@ -145,9 +154,11 @@ void  loop() {
     Sun();
   }
 
-  if (Serial1.available()) {  
-    char c = Serial1.read();
-    gps_out.print(c);
+  if (!DEBUG) {
+    if (Serial1.available()) {  
+      char c = Serial1.read();
+      gps_out.print(c);
+    }
   }
 
   if (isTime(&TimeMark,TimeInterval))  { 
@@ -162,14 +173,13 @@ void  loop() {
     }
 
   }   
-  
-  
+
   if (isTime(&saveTimeMark,saveTimeInterval))  { // Каждые 20 минут
-   Save_Bar_Data(); 
+    Save_Bar_Data(); 
   }
 
-  if (isTime(&showTimeMark,showTimeInterval))  { // Каждые 20 минут
-   Show_Bar_Data(); 
+  if (isTime(&showTimeMark,showTimeInterval))  { // Каждые 2 минуты
+    Show_Bar_Data(); 
   }
 
   if (isTime(&bmpTimeMark,bmpTimeInterval))  { // Каждые 1 минутa
@@ -312,22 +322,85 @@ void Sun( void ) {
 // --------------------------------------- Сохраняем данные о давлении ------------------------------------
 
 void Save_Bar_Data( void ) {
-   
-   DateTime now = rtc.now();
-   bmp085_data.unix_time = now.unixtime(); 
-   
-   unsigned long BAR_EEPROM_POS = ( (bmp085_data.unix_time/1800)%96 ) * sizeof(bmp085_data); // Номер ячейки памяти.
-    
-   const byte* p = (const byte*)(const void*)&bmp085_data;
-    
-   for (unsigned int i = 0; i < sizeof(bmp085_data); i++) 
+
+  DateTime now = rtc.now();
+
+  bmp085_data.unix_time = now.unixtime(); 
+
+  unsigned long BAR_EEPROM_POS = ( (bmp085_data.unix_time/1800)%96 ) * sizeof(bmp085_data); // Номер ячейки памяти.
+
+  const byte* p = (const byte*)(const void*)&bmp085_data;
+  for (unsigned int i = 0; i < sizeof(bmp085_data); i++) 
     EEPROM.write(BAR_EEPROM_POS++,*p++);
-   
+
 }
 
 // ------------------------------- Выводим на экран данные давления ----------------------------------------
 
-void Show_Data_Bar( void ) {
-  
+void Show_Bar_Data( void ) {
+
+  DateTime now = rtc.now(); 
+
+  byte current_position = (now.unixtime()/1800)%96;  
+
+  Average<double> bar_data(96); // Вычисление максимального и минимального значения
+
+  double barArray[96];   
+
+  unsigned long BAR_EEPROM_POS = 0;
+
+  for(byte j = 0;j < 96; j++) {           
+
+    byte* pp = (byte*)(void*)&bmp085_out;   
+    for (unsigned int i = 0; i < sizeof(bmp085_out); i++)
+      *pp++ = EEPROM.read(BAR_EEPROM_POS++); 
+
+    if (DEBUG) {
+      gps_out.print(j);
+      gps_out.print(" ");      
+      gps_out.print(bmp085_out.Press);
+      gps_out.print(" ");
+      gps_out.println(bmp085_out.unix_time);
+    }
+
+    if ((now.unixtime() - bmp085_out.unix_time) < TWO_DAYS) {
+      barArray[j] = bmp085_out.Press; 
+      bar_data.push(bmp085_out.Press);     
+    } 
+    else {      
+      barArray[j] = 0.0;
+    }
+  }
+
+
+  int y_pres = 127;
+  int x;
+
+  for(byte j=14;j<96;j++) {
+
+    if (j != 0) {
+      x = map(barArray[current_position],bar_data.minimum()-1,bar_data.maximum()+1,25,59);
+    } 
+    else {
+      x = map(Pressure/133.3,bar_data.minimum()-1,bar_data.maximum()+1,25,59); // Текущие значение
+    }
+
+    GLCD.DrawLine( y_pres,25,y_pres, 59, WHITE);  // Стереть линию
+
+    if (barArray[current_position] != 0.0) {     
+      GLCD.DrawLine(y_pres,x,y_pres,59,BLACK); // Нарисовать данные    
+    }
+
+    if (current_position == 0) current_position = 82;
+
+    current_position--; 
+
+    y_pres--;
+
+  } 
+
 }
+
+
+
 

@@ -12,6 +12,28 @@
 #include <TinyGPS++.h>
 #include <Sunrise.h>
 #include <SoftwareSerial.h>
+#include <Average.h>
+#include <BMP085.h>
+#include <EEPROM.h>
+
+// ----------------------- BMP085 ---------------------------------
+
+struct bmp085_data_in // Данные о давлении,высоте и температуре
+{    
+  double Press;
+  unsigned long unix_time; 
+
+} 
+bmp085_data;
+
+struct bmp085_data_out  // Данные о давлении,высоте и температуре
+{    
+  double Press;
+  unsigned long unix_time; 
+
+} 
+bmp085_out;
+
 
 SoftwareSerial gps_out(7,6); // RX, TX GPS Out vi Bluetooth HC-05 Speed 4800
 
@@ -30,51 +52,25 @@ unsigned long SetgpsTimeMark     = 0;
 unsigned long SetgpsTimeInterval = 1000*60*10;  // 10 Минут
 
 unsigned long TimeMark = 0;
-unsigned long TimeInterval = 800; // Каждую секунду
+unsigned long TimeInterval = 800;  // Каждую секунду
 
+unsigned long bmpTimeMark = 0;
+unsigned long bmpTimeInterval = 6000;  // Каждую секунду
 
-// ------------------- GLOBAL DATE TIME POSITION -------------------------------------
+unsigned long saveTimeMark = 0;
+unsigned long saveTimeInterval = 1000*60*5;  // Каждые 20 минут
 
-int Up_m = 0;
-int Up_h = 0;
-int D_m = 0;
-int D_h = 0;
+unsigned long showTimeMark = 0;
+unsigned long showTimeInterval = 1000*60*2;  // Каждые 2 минуты
 
-int g_year;
-byte g_month, g_day, g_hour, g_minutes, g_second, g_hundredths;
-unsigned long g_age;
-unsigned long g_fix_age;
-float g_lat, g_lon;
 
 // -----------------------------------------------------------------------------------
 
 TinyGPSPlus gps;
+BMP085 dps = BMP085();   
+long Temperature = 0, Pressure = 0, Altitude = 0;
 
 // -----------------------------------------------------------------------------------
-
-long previousMillis = 0; 
-long interval = 1000; 
-
-// ------------------------- BMP085 ---------------------------------------
-
-#define BMP085_ADDRESS 0x77   // I2C address of BMP085
-
-const unsigned char OSS = 0;  // Oversampling Setting
-
-int ac1;
-int ac2;
-int ac3;
-unsigned int ac4;
-unsigned int ac5;
-unsigned int ac6;
-int b1;
-int b2;
-int mb;
-int mc;
-int md;
-long b5;
-
-// ---------------------- END BMP085 -----------------------------------------
 
 unsigned long currentMillis;
 
@@ -91,7 +87,7 @@ void setup() {
 
   rtc.begin();
 
-  bmp085Calibration();
+  dps.init(MODE_ULTRA_HIGHRES, 25000, true);  // Разрешение BMP180
 
   GLCD.Init();                             
   GLCD.SelectFont(TimeFont); 
@@ -108,12 +104,33 @@ void setup() {
   // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 
   Sun();
- 
+
   // x,y - рисует линейку
-  
+
   GLCD.DrawLine( 45,60, 127, 60, BLACK);  // Горизонт
   GLCD.DrawLine( 45,25, 45, 60, BLACK);    // Вертикаль
-  
+
+  //  25 |
+  //       |
+  //       |
+  //       |
+  //  60 |
+  //  ------------------------------------------------------- 127x
+  //  45x
+
+  dps.getTemperature(&Temperature);  // Температура
+  dps.getPressure(&Pressure);              // Давление
+  dps.getAltitude(&Altitude);                   // Высота 
+
+  bmp085_data.Press = Pressure/133.3;
+
+  GLCD.SelectFont(System5x7);
+  GLCD.CursorToXY(92,1);
+  GLCD.print(bmp085_data.Press);
+
+  GLCD.SelectFont(System5x7);
+  GLCD.CursorToXY(92,12);
+  GLCD.print(Temperature/10.0);
 
 }
 
@@ -145,6 +162,33 @@ void  loop() {
     }
 
   }   
+  
+  
+  if (isTime(&saveTimeMark,saveTimeInterval))  { // Каждые 20 минут
+   Save_Bar_Data(); 
+  }
+
+  if (isTime(&showTimeMark,showTimeInterval))  { // Каждые 20 минут
+   Show_Bar_Data(); 
+  }
+
+  if (isTime(&bmpTimeMark,bmpTimeInterval))  { // Каждые 1 минутa
+
+    dps.getTemperature(&Temperature);  // Температура
+    dps.getPressure(&Pressure);              // Давление
+    dps.getAltitude(&Altitude);                   // Высота 
+
+    bmp085_data.Press = (bmp085_data.Press + Pressure/133.3)/2.0;
+
+    GLCD.SelectFont(System5x7);
+    GLCD.CursorToXY(92,1);
+    GLCD.print(bmp085_data.Press);
+
+    GLCD.SelectFont(System5x7);
+    GLCD.CursorToXY(92,12);
+    GLCD.print(Temperature/10.0);
+
+  }
 
 }
 
@@ -153,6 +197,7 @@ void  loop() {
 // ------------------------------------------------ Functions ------------------------------------------
 
 int isTime(unsigned long *timeMark, unsigned long timeInterval) {
+
   unsigned long timeCurrent;
   unsigned long timeElapsed;
   int result=false;
@@ -226,7 +271,7 @@ void Sun( void ) {
 
     DateTime cur_time = rtc.now();
 
-    Sunrise mySunrise(gps.location.lat(),gps.location.lng(),4);
+    Sunrise mySunrise(gps.location.lat(),gps.location.lng(),UTC);
 
     mySunrise.Actual();
 
@@ -264,347 +309,25 @@ void Sun( void ) {
 
 }
 
+// --------------------------------------- Сохраняем данные о давлении ------------------------------------
 
-// ------------------------------ Устанавливаем данные со спутника ------------------------------------
-
-void set_gps_values( void ) {
-
-  /*  
-   int t;
-   byte _hour;
+void Save_Bar_Data( void ) {
    
-   // gps.crack_datetime(&g_year, &g_month, &g_day, &g_hour, &g_minutes, &g_second, &g_hundredths, &g_age);
+   DateTime now = rtc.now();
+   bmp085_data.unix_time = now.unixtime(); 
    
-   if (g_age != TinyGPS::GPS_INVALID_AGE) {
+   unsigned long BAR_EEPROM_POS = ( (bmp085_data.unix_time/1800)%96 ) * sizeof(bmp085_data); // Номер ячейки памяти.
+    
+   const byte* p = (const byte*)(const void*)&bmp085_data;
+    
+   for (unsigned int i = 0; i < sizeof(bmp085_data); i++) 
+    EEPROM.write(BAR_EEPROM_POS++,*p++);
    
-   gps.f_get_position(&g_lat, &g_lon, &g_fix_age);
-   
-   _hour = g_hour + 4;
-   
-   if (_hour > 24) { 
-   g_hour = g_hour; 
-   } else { 
-   g_hour = _hour; 
-   }
-   
-   if (_hour == 24) { 
-   g_hour = 0; 
-   }
-   
-   setTime(g_hour,g_minutes,g_second,g_day,g_month,g_year); // set time to 4:37 am Jan 2 2010 
-   
-   // ============== Set Date for DS1307 ======================
-   
-   byte weekDay =     2;  //1-7
-   
-   Wire.beginTransmission(DS1307_ADDRESS);
-   Wire.write(0); //stop Oscillator
-   
-   Wire.write(decToBcd(g_second));
-   Wire.write(decToBcd(g_minutes));
-   Wire.write(decToBcd(g_hour));
-   Wire.write(decToBcd(weekDay));
-   Wire.write(decToBcd(g_day));
-   Wire.write(decToBcd(g_month));
-   Wire.write(decToBcd(g_year));
-   
-   Wire.write(0); //start
-   Wire.endTransmission();
-   
-   
-   
-   }
-   */
-
 }
 
+// ------------------------------- Выводим на экран данные давления ----------------------------------------
 
-// ------------------------- BMP085 Functions ---------------------------------
-
-// --------------- Stores all of the bmp085's calibration values into global variables
-// --------------- Calibration values are required to calculate temp and pressure
-// --------------- This function should be called at the beginning of the program
-
-void bmp085Calibration( void ) {
-
-  ac1 = bmp085ReadInt(0xAA);
-  ac2 = bmp085ReadInt(0xAC);
-  ac3 = bmp085ReadInt(0xAE);
-  ac4 = bmp085ReadInt(0xB0);
-  ac5 = bmp085ReadInt(0xB2);
-  ac6 = bmp085ReadInt(0xB4);
-  b1 = bmp085ReadInt(0xB6);
-  b2 = bmp085ReadInt(0xB8);
-  mb = bmp085ReadInt(0xBA);
-  mc = bmp085ReadInt(0xBC);
-  md = bmp085ReadInt(0xBE);
-
+void Show_Data_Bar( void ) {
+  
 }
-
-// ----------------------------- Calculate temperature in deg C ----------------------------------------
-
-float bmp085GetTemperature(unsigned int ut) {
-
-  long x1, x2;
-
-  x1 = (((long)ut - (long)ac6)*(long)ac5) >> 15;
-  x2 = ((long)mc << 11)/(x1 + md);
-  b5 = x1 + x2;
-
-  float temp = ((b5 + 8)>>4);
-  temp = temp /10;
-
-  return temp;
-}
-
-// ------------------ Calculate pressure given up
-// ------------------ calibration values must be known
-// ------------------ b5 is also required so bmp085GetTemperature(...) must be called first.
-// ------------------ Value returned will be pressure in units of Pa.
-
-long bmp085GetPressure(unsigned long up) {
-
-  long x1, x2, x3, b3, b6, p;
-  unsigned long b4, b7;
-
-  b6 = b5 - 4000;
-
-  // ------ Calculate B3
-
-  x1 = (b2 * (b6 * b6)>>12)>>11;
-  x2 = (ac2 * b6)>>11;
-  x3 = x1 + x2;
-  b3 = (((((long)ac1)*4 + x3)<<OSS) + 2)>>2;
-
-  // ----- Calculate B4
-
-  x1 = (ac3 * b6)>>13;
-  x2 = (b1 * ((b6 * b6)>>12))>>16;
-  x3 = ((x1 + x2) + 2)>>2;
-  b4 = (ac4 * (unsigned long)(x3 + 32768))>>15;
-
-  b7 = ((unsigned long)(up - b3) * (50000>>OSS));
-  if (b7 < 0x80000000)
-    p = (b7<<1)/b4;
-  else
-    p = (b7/b4)<<1;
-
-  x1 = (p>>8) * (p>>8);
-  x1 = (x1 * 3038)>>16;
-  x2 = (-7357 * p)>>16;
-  p += (x1 + x2 + 3791)>>4;
-
-  long temp = p;
-  return temp;
-}
-
-// ------------------------------------- Read 1 byte from the BMP085 at 'address' --------------------------------
-
-char bmp085Read(unsigned char address) {
-
-  unsigned char data;
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(address);
-  Wire.endTransmission();
-
-  Wire.requestFrom(BMP085_ADDRESS, 1);
-  while(!Wire.available());
-
-  return Wire.read();
-}
-
-// --------------------------------------- Read 2 bytes from the BMP085
-// --------------------------------------- First byte will be from 'address'
-// --------------------------------------- Second byte will be from 'address'+1
-
-int bmp085ReadInt(unsigned char address) {
-
-  unsigned char msb, lsb;
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(address);
-  Wire.endTransmission();
-
-  Wire.requestFrom(BMP085_ADDRESS, 2);
-  while(Wire.available()<2);
-
-  msb = Wire.read();
-  lsb = Wire.read();
-
-  return (int) msb<<8 | lsb;
-}
-
-// -------------------------------- Read the uncompensated temperature value ---------------------------------------
-
-unsigned int bmp085ReadUT(){
-
-  unsigned int ut;
-
-  // Write 0x2E into Register 0xF4
-  // This requests a temperature reading
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(0xF4);
-  Wire.write(0x2E);
-  Wire.endTransmission();
-
-  // Wait at least 4.5ms
-
-  delay(5);
-
-  // Read two bytes from registers 0xF6 and 0xF7
-
-  ut = bmp085ReadInt(0xF6);
-
-  return ut;
-}
-
-// ------------------------------ Read the uncompensated pressure value ------------------------------------------
-
-unsigned long bmp085ReadUP(){
-
-  unsigned char msb, lsb, xlsb;
-  unsigned long up = 0;
-
-  // Write 0x34+(OSS<<6) into register 0xF4
-  // Request a pressure reading w/ oversampling setting
-
-  Wire.beginTransmission(BMP085_ADDRESS);
-  Wire.write(0xF4);
-  Wire.write(0x34 + (OSS<<6));
-  Wire.endTransmission();
-
-  // Wait for conversion, delay time dependent on OSS
-
-  delay(2 + (3<<OSS));
-
-  // Read register 0xF6 (MSB), 0xF7 (LSB), and 0xF8 (XLSB)
-
-  msb  = bmp085Read(0xF6);
-  lsb  = bmp085Read(0xF7);
-  xlsb = bmp085Read(0xF8);
-
-  up = (((unsigned long) msb << 16) | ((unsigned long) lsb << 8) | (unsigned long) xlsb) >> (8-OSS);
-
-  return up;
-}
-
-// ---------------------------------------- Запись регистров -----------------------------
-
-void writeRegister(int deviceAddress, byte address, byte val) {
-
-  Wire.beginTransmission(deviceAddress);  // start transmission to device 
-  Wire.write(address);                    // send register address
-  Wire.write(val);                        // send value to write
-  Wire.endTransmission();                 // end transmission
-}
-
-
-// ------------------ Чтение регистров --------------------------------------------------
-
-int readRegister(int deviceAddress, byte address){
-
-  int v;
-
-  Wire.beginTransmission(deviceAddress);
-  Wire.write(address);                    // register to read
-  Wire.endTransmission();
-
-  Wire.requestFrom(deviceAddress, 1);     // read a byte
-
-  while(!Wire.available());
-
-  v = Wire.read();
-  return v;
-}
-
-// -------------------------------------- Высота -------------------------------------
-
-float calcAltitude(float pressure) {
-
-  float A = pressure/101325;
-  float B = 1/5.25588;
-  float C = pow(A,B);
-  C = 1 - C;
-  C = C /0.0000225577;
-
-  return C;
-}
-
-// ------------------------- Печать BMP Дата ------------------------------------------
-
-void bmp( void ) {
-
-  float temperature = bmp085GetTemperature(bmp085ReadUT()); // MUST be called first
-  float pressure = bmp085GetPressure(bmp085ReadUP());
-  float atm = pressure / 101325;                            // standard atmosphere
-  float altitude = calcAltitude(pressure);                  // Uncompensated caculation - in Meters 
-
-  GLCD.SelectFont(System5x7);
-
-  GLCD.CursorToXY(63,36);
-  GLCD.print(temperature);
-  GLCD.print("C");
-
-  GLCD.CursorToXY(63,46);
-  GLCD.print(pressure/133.322,0);
-  GLCD.print(" N");
-  GLCD.print(g_lat);
-
-  GLCD.CursorToXY(63,56);
-  GLCD.print(altitude,0);
-  GLCD.print(" E");
-  GLCD.print(g_lon);
-
-  GLCD.SelectFont(fixednums7x15);
-
-  GLCD.CursorToXY(100,0);
-
-  //  if ( minute() > 30 && minute() < 35) GLCD.print(pressure/133.322,0);
-
-  GLCD.CursorToXY(100,20);
-
-  // if ( minute() > 0 && minute() < 5) GLCD.print(pressure/133.322,0);
-
-}
-
-// ========================= DS1307 =============================================
-
-void setDateTime() {
-
-  byte second =      00; //0-59
-  byte minute =      14; //0-59
-  byte hour =        14; //0-23
-  byte weekDay =     4;  //1-7
-  byte monthDay =    31; //1-31
-  byte month =       10;  //1-12
-  byte year  =       13; //0-99
-
-  Wire.beginTransmission(DS1307_ADDRESS);
-  Wire.write(0); //stop Oscillator
-
-  Wire.write(decToBcd(second));
-  Wire.write(decToBcd(minute));
-  Wire.write(decToBcd(hour));
-  Wire.write(decToBcd(weekDay));
-  Wire.write(decToBcd(monthDay));
-  Wire.write(decToBcd(month));
-  Wire.write(decToBcd(year));
-
-  Wire.write(0); //start
-  Wire.endTransmission();
-
-}
-
-byte decToBcd(byte val) {
-  return ( (val/10*16) + (val%10) );
-}
-
-byte bcdToDec(byte val) {
-  return ( (val/16*10) + (val%16) );
-}
-
-
-
 

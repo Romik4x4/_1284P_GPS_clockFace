@@ -16,7 +16,7 @@
 #include <BMP085.h>
 #include <EEPROM.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 // ----------------------- BMP085 ---------------------------------
 
@@ -58,13 +58,13 @@ unsigned long TimeMark = 0;
 unsigned long TimeInterval = 800;  // Каждую секунду
 
 unsigned long bmpTimeMark = 0;
-unsigned long bmpTimeInterval = 6000;  // Каждую минуту
+unsigned long bmpTimeInterval = FIVE_MINUT;  // Каждую минуту
 
 unsigned long saveTimeMark = 0;
-unsigned long saveTimeInterval = FIVE_MINUT*4;  // Каждые 20 минут
+unsigned long saveTimeInterval = FIVE_MINUT*3;  // Каждые 20 минут
 
 unsigned long showTimeMark = 0;
-unsigned long showTimeInterval = 6000*2;  // Каждые 2 минуты
+unsigned long showTimeInterval = FIVE_MINUT/2;  // Каждые 2 минуты
 
 
 // -----------------------------------------------------------------------------------
@@ -115,7 +115,7 @@ void setup() {
   // x,y - рисует линейку
 
   GLCD.DrawLine( 45,60, 127, 60, BLACK);  // Горизонт
-  GLCD.DrawLine( 45,25, 45, 60, BLACK);    // Вертикаль
+  GLCD.DrawLine( 45,26, 45, 60, BLACK);    // Вертикаль
 
   //  25 |
   //       |
@@ -303,14 +303,14 @@ void Sun( void ) {
 
   GLCD.SelectFont(fixednums7x15);  // Select Font
 
-  GLCD.CursorToXY(0,27);
+  GLCD.CursorToXY(1,27);
   if (Up_h<10) GLCD.print("0"); 
   GLCD.print(Up_h,DEC);     
   GLCD.print(":");     
   if (Up_m<10) GLCD.print("0"); 
   GLCD.print(Up_m,DEC);     
 
-  GLCD.CursorToXY(0,45);
+  GLCD.CursorToXY(1,45);
   if (D_h<10) GLCD.print("0"); 
   GLCD.print(D_h,DEC);     
   GLCD.print(":");     
@@ -356,11 +356,38 @@ void Show_Bar_Data( void ) {
       *pp++ = EEPROM.read(BAR_EEPROM_POS++); 
 
     if (DEBUG) {
-      gps_out.print(j);
-      gps_out.print(" ");      
-      gps_out.print(bmp085_out.Press);
-      gps_out.print(" ");
-      gps_out.println(bmp085_out.unix_time);
+
+      DateTime eeTime (bmp085_out.unix_time);
+
+      if ( bmp085_out.Press > 0.0 ) {
+
+        gps_out.print(j);
+        gps_out.print(" ");              
+        gps_out.print(current_position);
+        gps_out.print(" ");      
+        gps_out.print(bmp085_out.Press);
+        gps_out.print(" ");
+        gps_out.print(bmp085_out.unix_time);
+
+        gps_out.print("  ");
+
+        gps_out.print(eeTime.year()); 
+        gps_out.print("-");
+        gps_out.print(eeTime.month());
+        gps_out.print("-");
+        gps_out.print(eeTime.day());
+
+        gps_out.print("  ");
+
+        gps_out.print(eeTime.hour());
+        gps_out.print(":");
+        gps_out.print(eeTime.minute());
+        gps_out.print(":");
+        gps_out.println(eeTime.second());
+
+
+      }
+
     }
 
     if ((now.unixtime() - bmp085_out.unix_time) < TWO_DAYS) {
@@ -375,23 +402,17 @@ void Show_Bar_Data( void ) {
 
   int y_pres = 127;
   int x;
+  
+  GLCD.FillRect(46,26,81,33,WHITE);
 
-  for(byte j=14;j<96;j++) {
+  for(byte j=0;j<81;j++) { // Количество данный выводимых на дисплей
 
-    if (j != 0) {
-      x = map(barArray[current_position],bar_data.minimum()-1,bar_data.maximum()+1,25,59);
-    } 
-    else {
-      x = map(Pressure/133.3,bar_data.minimum()-1,bar_data.maximum()+1,25,59); // Текущие значение
+    if (barArray[current_position] > 0.0) {     
+      x = map(barArray[current_position],bar_data.minimum(),bar_data.maximum(),59,26);
+      GLCD.DrawLine(y_pres,x,y_pres,59,BLACK);       // Нарисовать данные    
     }
 
-    GLCD.DrawLine( y_pres,25,y_pres, 59, WHITE);  // Стереть линию
-
-    if (barArray[current_position] != 0.0) {     
-      GLCD.DrawLine(y_pres,x,y_pres,59,BLACK); // Нарисовать данные    
-    }
-
-    if (current_position == 0) current_position = 82;
+    if (current_position == 0) current_position = 96;
 
     current_position--; 
 
@@ -400,6 +421,9 @@ void Show_Bar_Data( void ) {
   } 
 
 }
+
+
+
 
 
 

@@ -36,6 +36,8 @@ struct bmp085_data_out  // Данные о давлении,высоте и те
 } 
 bmp085_out;
 
+Average<double> bar_avr(100);
+ 
 #define TWO_DAYS 172800
 
 #define GPS_STAT  1 // D1 LED
@@ -188,11 +190,13 @@ void  loop() {
     dps.getPressure(&Pressure);              // Давление
     dps.getAltitude(&Altitude);                   // Высота 
 
-    bmp085_data.Press = (bmp085_data.Press + Pressure/133.3)/2.0;
+    bar_avr.push(Pressure/133.3);     
+ 
+    bmp085_data.Press = bar_avr.mean();
 
     GLCD.SelectFont(System5x7);
     GLCD.CursorToXY(92,1);
-    GLCD.print(bmp085_data.Press);
+    GLCD.print(bar_avr.mean());
 
     GLCD.SelectFont(System5x7);
     GLCD.CursorToXY(92,12);

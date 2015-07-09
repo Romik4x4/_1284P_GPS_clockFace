@@ -16,7 +16,7 @@
 #include <BMP085.h>
 #include <EEPROM.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 // ----------------------- BMP085 ---------------------------------
 
@@ -405,7 +405,7 @@ void Show_Bar_Data( void ) {
   
   GLCD.FillRect(46,26,81,33,WHITE);
 
-  for(byte j=0;j<81;j++) { // Количество данный выводимых на дисплей
+  for(byte j=0;j<82;j++) { // Количество данный выводимых на дисплей
 
     if (barArray[current_position] > 0.0) {     
       x = map(barArray[current_position],bar_data.minimum(),bar_data.maximum(),59,26);

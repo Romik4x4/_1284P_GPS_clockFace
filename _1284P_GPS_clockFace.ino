@@ -1,5 +1,5 @@
 //
-// Arduino 1.0.6
+// Arduino 1.0.6 (11.10.2015)
 //
 
 #include <Wire.h>
